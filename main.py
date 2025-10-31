@@ -16,6 +16,8 @@ async def main():
     
     try:
         await bot.start(token)
+    except asyncio.CancelledError:
+        print("Bot connection cancelled - shutting down gracefully...")
     except KeyboardInterrupt:
         print("Received shutdown signal...")
     except Exception as e:
@@ -23,8 +25,22 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
-        await shutdown_cleanup()
-        await bot.close()
+        print("Starting cleanup...")
+        try:
+            await shutdown_cleanup()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+        
+        try:
+            if not bot.is_closed():
+                await bot.close()
+        except Exception as e:
+            print(f"Error closing bot: {e}")
+        
+        print("Bot shutdown complete.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Shutdown complete.")

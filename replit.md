@@ -1,170 +1,132 @@
 # RAIDerBot - Discord Guild Management Bot
 
 ## Project Overview
-
-RAIDerBot is a comprehensive Discord bot for guild management with features including:
-- Multi-slot character tracking with main + subclass system
-- Combat Power (CP) tracking with formatted display
-- Attendance event system with live countdowns and recurring events
-- Survey system via DMs for character data collection
-- CSV/JSON data exports
-- Server nickname-based user management
-
-**Status:** ✅ Bot is running and connected to Discord
-**Database:** ✅ PostgreSQL configured and initialized
-**Last Updated:** October 31, 2025
+RAIDerBot is a comprehensive Discord bot for managing guild characters, combat power tracking, and attendance events with real-time updates. Built specifically for Lineage 2-style guild management.
 
 ## Recent Changes
+**October 31, 2025**: Project imported and initialized on Replit
+- Extracted all project files from zip archive
+- Installed Python 3.11 and all dependencies (discord.py 2.6.4, asyncpg 0.30.0, pytz 2025.2)
+- PostgreSQL database ready (8 tables will auto-initialize on first run)
+- Discord bot token configured via Replit Secrets
+- Workflow configured and bot successfully started
+- Bot logged in and connected as TEST#1210
 
-### October 31, 2025 - Production Deployment Preparation
-- ✅ Code analyzed for errors and memory leaks
-- ✅ Fixed `!reward` command (removed ID display)
-- ✅ Fixed `!restart` command (bulk delete all channel messages)
-- ✅ Integrated cache clearing into `!restart` process
-- ✅ Created comprehensive deployment documentation
-- ✅ Prepared files for Railway and GitHub deployment
-- ✅ Added GitHub Actions CI/CD workflow
-- ✅ Created LICENSE (MIT), CONTRIBUTING.md, CODE_HEALTH_REPORT.md
-- ✅ Bot running successfully with all optimizations active
+## Current Status
+✅ Bot is RUNNING and connected to Discord
+✅ Database initialized with all required tables
+✅ All environment variables configured
+✅ Ready for production use
 
-### October 31, 2025 - Initial Setup
-- Imported bot codebase from zip archive
-- Installed dependencies: discord.py, asyncpg, pytz
-- Configured PostgreSQL database with DATABASE_URL
-- Set up DISCORD_BOT_TOKEN secret
-- Created RAIDerBot workflow to run the bot
-- Bot successfully connected to Discord
+## Database Tables
+- **users** - Player data (nickname, characters, CP, attendance responses)
+- **attendance_events** - Event scheduling and tracking
+- **available_mains** - Main character types
+- **available_subclasses** - Subclass options per main
+- **dm_messages** - DM tracking for auto-cleanup
+- **event_metadata** - Event scheduling metadata
+- **leaderboards** - Player rankings
+- **settings** - Guild configuration
 
-## Project Architecture
-
-### File Structure
-```
-main.py           - Entry point, starts the bot
-bot.py            - Main bot logic, commands, and event handlers
-database.py       - PostgreSQL database operations with connection pooling
-characters.py     - Character class definitions for Lineage 2
-requirements.txt  - Python dependencies
-pyproject.toml    - Project metadata and dependencies
-.gitignore        - Git ignore rules for Python
-```
-
-### Database Schema
-- **users** table: discord_id, nickname, characters (JSONB), combat_power (BIGINT), attendances (JSONB), timestamps
-- **settings** table: key-value pairs for guild configuration
-- **attendance_events** table: event_id, message, time, am_pm, date, channel_message_id, timestamp
-
-### Key Features
-1. **Dynamic character slots**: Admin configurable (1-10 slots per player)
-2. **Automatic subclass reset**: When main character changes, subclass clears
-3. **Live countdown timers**: Updates every 10 minutes (>30 min) or 1 minute (≤30 min)
-4. **Connection pooling**: 5-30 PostgreSQL connections for high performance
-5. **Per-user locks**: Fine-grained concurrency control for data integrity
-6. **DM auto-cleanup**: Removes bot DMs older than 48 hours (database preserved)
+## Key Features
+- Multi-slot character system with dynamic slot configuration (1-10 slots)
+- Attendance events with modal creation and live countdown timers
+- YES/NO button responses via DM
+- Real-time participant counts in channel announcements
+- Multi-day recurring events with automatic scheduling
+- CSV/JSON exports for all data
+- Automatic DM cleanup (48+ hours old)
+- Server nickname display (Discord IDs stored internally)
 
 ## Environment Variables
+All configured via Replit Secrets:
+- `DISCORD_BOT_TOKEN` - Discord bot authentication
+- `DATABASE_URL` - PostgreSQL connection (auto-configured)
+- `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` - Database credentials
 
-Required secrets (configured in Replit Secrets):
-- `DISCORD_BOT_TOKEN` - Discord bot authentication token
-- `DATABASE_URL` - PostgreSQL connection string (auto-configured)
-
-Additional database variables (auto-configured):
-- `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`
-
-## Admin Commands
-
+## Admin Commands Quick Reference
 ### Configuration
 - `!raider` - List all admin commands
 - `!guildname <name>` - Set guild name
 - `!setrole <@role>` - Set role for surveys/attendance
 - `!setchannel <#channel>` - Set announcement channel
-- `!characters <number>` - Set number of character slots (1-10)
-- `!polltitle <title>` - Set attendance channel post title
-- `!dmtitle <title>` - Set attendance DM title
+- `!characters <number>` - Set character slots (1-10)
+- `!polltitle <title>` - Channel post title
+- `!dmtitle <title>` - DM message title
 
 ### Character Management
 - `!addmain <Main>` - Add main character type
 - `!deletemain <Main>` - Remove main character type
-- `!addsub <Main> <Class>` - Add subclass under main
+- `!addsub <Main> <Class>` - Add subclass
 - `!deletesub <Main> <Class>` - Remove subclass
-- `!addcharacter` - Add character slot
-- `!deletecharacter <1/2/3>` - Remove specific slot
 
 ### Data Collection
-- `!survey` - Start survey DM to all role members
-- `!poll` - Create attendance event (modal flow)
+- `!survey` - Start character survey
+- `!poll` - Create attendance event (modal)
 - `!poll <id> @user` - Resend attendance DM
 - `!deletepoll <id>` - Delete attendance event
 
 ### Data Export
-- `!exportsurvey` - Export survey data as CSV
-- `!exportpoll` - Export attendance data as CSV
-- `!exportdatabase` - Export full database as JSON
+- `!exportsurvey` - Export survey data (CSV)
+- `!exportpoll` - Export attendance data (CSV)
+- `!exportdatabase` - Export full database (JSON)
+
+### Reward Configuration
+- `!rewardconfig` - View current reward formula values
+- `!setreward <setting> <value>` - Change a reward value
+  - Example: `!setreward base_role_reward 3000`
+  - Settings: max_reward, base_role_reward, survey_bonus, survey_penalty_no_submit, event_portion, pvp_portion, survey_penalty_1, survey_penalty_2
 
 ### Maintenance
 - `!deletesurvey` - Clear all survey responses
 - `!deletecache` - Clear temporary cache
 - `!deletepolls` - Delete all attendance events
 - `!msg <text>` - DM all role members
-- `!editdatabase @user character <slot> main|subclass <value>`
 
 ## Player Commands
-
-- DM "survey" to bot - Redo character survey
+- Send "survey" via DM to bot - Redo character survey anytime
 - Click YES/NO buttons in attendance DMs
 
-## Workflows
+## Technical Details
+- **Language**: Python 3.11
+- **Framework**: discord.py 2.6.4
+- **Database**: PostgreSQL with asyncpg (connection pooling: 5-30 connections)
+- **Performance**: Optimized for 100+ concurrent users
+- **DM Rate Limiting**: 15 concurrent sends with exponential backoff
+- **Memory Management**: Automatic cleanup every 6 hours
 
-### RAIDerBot (Main Bot)
-- **Command:** `python main.py`
-- **Status:** Running
-- **Output:** Console logs
-- **Purpose:** Discord bot connection and command handling
+## Deployment Notes
+- Bot runs continuously via Replit workflow
+- Auto-restarts on code changes
+- Database migrations automatic on startup
+- Logs available in Replit console
 
-## User Preferences
+## Default Character Classes
+Pre-configured with Lineage 2 classes:
+- **Human**: Duelist, Dreadnought, Phoenix Knight, Hell Knight, Sagittarius, Adventurer, Archmage, Soultaker, Mystic Muse, Storm Screamer, Hierophant, Eva's Saint, Shillien Saint
+- **Elf**: Moonlight Sentinel, Sword Muse, Wind Rider, Mystic Muse, Elemental Master, Eva's Saint
+- **Dark Elf**: Ghost Hunter, Spectral Dancer, Storm Screamer, Shillien Templar, Shillien Saint
+- **Orc**: Titan, Grand Khavatari, Dominator, Doomcryer
+- **Dwarf**: Maestro, Fortune Seeker
+- **Kamael**: Trickster, Doombringer, Soulhound, Judicator
 
-- All user-facing names display server nicknames, not Discord usernames
-- Discord IDs stored internally for identification only
-- CSV exports use wide format for multi-slot data
-- Event IDs are reusable after deletion
+## Important Notes
+- All displayed names use server nicknames (Discord account names NOT shown)
+- Discord IDs stored internally for identification
+- Event IDs reusable after deletion
+- Subclass automatically resets when main character changes
+- Combat Power accepts numeric input only (commas auto-formatted)
+- DM auto-cleanup runs hourly (database records preserved)
+- Countdown updates adaptively: 10-min intervals (>30 min remaining), 1-min intervals (≤30 min)
 
-## Development Notes
+## Next Steps for Production Use
+1. Invite bot to your Discord server with proper permissions
+2. Enable **SERVER MEMBERS INTENT** and **MESSAGE CONTENT INTENT** in Discord Developer Portal
+3. Run `!setrole @YourRole` to set the member role
+4. Run `!setchannel #your-channel` to set announcement channel
+5. Run `!guildname YourGuildName` to set guild name
+6. Customize titles with `!polltitle` and `!dmtitle`
+7. Start your first survey with `!survey`
 
-### Dependencies
-- Python 3.11+
-- discord.py 2.6.4+ (with SERVER MEMBERS and MESSAGE CONTENT intents)
-- asyncpg 0.30.0+ (PostgreSQL async driver)
-- pytz 2025.2+ (Timezone handling)
-
-### Performance Optimizations
-- Connection pooling: 5-30 connections, 10s timeout
-- Per-user locks: Write locking only, reads are lock-free
-- DM concurrency: 15 simultaneous sends with rate limiting
-- Lock cleanup: 24-hour max age for inactive locks
-- Memory cleanup: Automatic every 6 hours
-
-### Discord Bot Requirements
-**Required Intents in Discord Developer Portal:**
-1. Go to https://discord.com/developers/applications
-2. Select your bot
-3. Navigate to "Bot" section
-4. Enable under "Privileged Gateway Intents":
-   - ✅ SERVER MEMBERS INTENT
-   - ✅ MESSAGE CONTENT INTENT
-
-## Next Steps
-
-To use the bot:
-1. Invite bot to your Discord server using OAuth2 URL with proper permissions
-2. Run `!raider` in a channel to see all admin commands
-3. Configure with `!guildname`, `!setrole`, `!setchannel`
-4. Add character types with `!addmain` and `!addsub`
-5. Set character slots with `!characters <number>`
-6. Run `!survey` to start collecting player data
-7. Create attendance events with `!poll`
-
-## Support
-
-For issues or questions, check:
-- README.md for detailed documentation
-- Database logs in PostgreSQL
-- Bot console logs in RAIDerBot workflow
+## Support & Documentation
+See README.md for full documentation and workflow examples.

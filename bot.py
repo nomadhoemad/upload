@@ -137,10 +137,6 @@ def format_cp_abbreviated(cp):
     else:
         return str(cp)
 
-def format_leaderboard_message():
-    """Format the leaderboard message with all users ranked by Combat Power"""
-    return asyncio.create_task(_format_leaderboard())
-
 async def _format_leaderboard():
     """Internal async function to format leaderboard"""
     users = await db.get_all_users()
@@ -148,12 +144,55 @@ async def _format_leaderboard():
     if not users:
         return "No member data available yet. Use !survey to collect data."
     
-    # Filter users with valid data and sort by combat power (highest first)
-    valid_users = [u for u in users if u['characters'] and len(u['characters']) > 0 and u['combat_power'] > 0]
-    valid_users.sort(key=lambda x: x['combat_power'], reverse=True)
+    # Get configured role to filter users
+    role_id = await db.get_setting('survey_role')
+    if not role_id:
+        return "No role configured. Use !config to set up the guild role first."
     
-    if not valid_users:
-        return "No member data with Combat Power available yet."
+    # Get guild members with the configured role
+    guild = None
+    for g in bot.guilds:
+        guild = g
+        break
+    
+    if not guild:
+        return "Bot is not in any server."
+    
+    role = guild.get_role(int(role_id))
+    if not role:
+        return "Configured role not found. Please run !config again to set a valid role."
+    
+    # Get all guild members with the configured role (matches !reward behavior)
+    members_with_role = [member for member in role.members]
+    
+    if not members_with_role:
+        return f"No members found with the {role.name} role."
+    
+    # Create a dict for quick database lookup
+    users_dict = {user['discord_id']: user for user in users}
+    
+    # Build list of all role members with their data (from DB if exists, otherwise empty)
+    role_users = []
+    for member in members_with_role:
+        discord_id = str(member.id)
+        user_data = users_dict.get(discord_id, {
+            'discord_id': discord_id,
+            'nickname': member.display_name,
+            'characters': [],
+            'combat_power': 0,
+            'attendances': {},
+            'timestamp': None
+        })
+        # Update nickname to current display name
+        user_data['nickname'] = member.display_name
+        role_users.append(user_data)
+    
+    # Split users into ranked (CP > 0) and unranked (CP = 0 or no data)
+    ranked_users = [u for u in role_users if u['characters'] and len(u['characters']) > 0 and u['combat_power'] > 0]
+    unranked_users = [u for u in role_users if not (u['characters'] and len(u['characters']) > 0 and u['combat_power'] > 0)]
+    
+    # Sort ranked users by combat power (highest first)
+    ranked_users.sort(key=lambda x: x['combat_power'], reverse=True)
     
     # Get tracking settings
     warning_seconds = await db.get_setting('track_warning_seconds')
@@ -163,7 +202,8 @@ async def _format_leaderboard():
     lines = ["Leaderboard", ""]
     current_time = datetime.now(pytz.UTC)
     
-    for user in valid_users:
+    # Add ranked users first (sorted by CP, highest to lowest)
+    for user in ranked_users:
         nickname = user['nickname']
         # Get main character's subclass
         main_char = user['characters'][0] if user['characters'] else {}
@@ -201,9 +241,20 @@ async def _format_leaderboard():
         
         lines.append(f"{prefix}{nickname} | {subclass} | {cp_formatted} CP")
     
+    # Add unranked users at the bottom
+    for user in unranked_users:
+        nickname = user['nickname']
+        # Check if they have any data
+        if user['characters'] and len(user['characters']) > 0:
+            main_char = user['characters'][0]
+            subclass = main_char.get('subclass', 'None')
+            lines.append(f"{nickname} | {subclass} | No CP")
+        else:
+            lines.append(f"{nickname} | No survey data")
+    
     # Add participant count
     lines.append("")
-    lines.append(f"Participants: {len(valid_users)}")
+    lines.append(f"Members: {len(ranked_users)}")
     
     # Add footer
     lines.append("")
@@ -347,52 +398,97 @@ async def shutdown_cleanup():
 @bot.command(name='raider')
 @commands.has_permissions(administrator=True)
 async def raider_help(ctx):
-    help_text = """
-**RAIDerBot Admin Commands**
-
-**Configuration:**
-`!config` - Interactive setup for guild name, roles, and announcement channel
-`!characters <number>` - Set number of character slots
-`!polltitle <title>` - Set title for channel posts
-`!dmtitle <title>` - Set title for DM messages
-
-**Character Management:**
-`!addmain <Main>` - Add a main character
-`!deletemain <Main>` - Remove a main character
-`!addsub <Main> <Class>` - Add subclass under main
-`!deletesub <Main> <Class>` - Remove subclass under main
-`!addcharacter` - Add character slot
-`!deletecharacter <1/2/3>` - Remove slot
-
-**Data Collection:**
-`!survey` - Send survey prompt to all role members (users type SURVEY to start)
-`!survey @user1 @user2` - Send survey prompt to specific users
-`!poll` - Start default attendance event (uses !setrole and !setchannel)
-`!poll <#channel> <@role>` - Start targeted poll (specific channel and role)
-`!poll <id> @user` - Resend attendance DM
-`!deletepoll <id>` - Delete attendance event
-`!event` - Create reaction-based attendance event in channel
-`!deleteevent <id>` - Delete reaction-based event
-
-**Data Export:**
-`!exportsurvey` - Export survey data as CSV
-`!exportpoll` - Export attendance data as CSV
-`!exportdatabase` - Export full database as JSON
-
-**Leaderboard:**
-`!leaderboard #channel` - Create live-updating leaderboard in channel
-`!tracksurvey <time1> <time2>` - Track survey age (⚠️ and 💩 emojis, e.g., 15D 30D)
-
-**Maintenance:**
-`!deleteuser <nickname>` - Delete a user from the database
-`!deletecache` - Clear temporary cache
-`!restart` - Delete all attendance events and refresh user nicknames
-`!msg <text>` - DM all role members
-`!msg @user1 @user2 <text>` - DM specific users
-`!msg #channel <text>` - Send message to a specific channel
-`!editdatabase @user character <slot> main|subclass <value>` - Edit character info
-"""
-    await ctx.send(help_text)
+    embed = discord.Embed(
+        title="⚔️ RAIDerBot Admin Commands",
+        description="Complete command reference for guild management",
+        color=0x5865F2
+    )
+    
+    embed.add_field(
+        name="⚙️ Configuration",
+        value=(
+            "`!config` - Interactive setup wizard\n"
+            "`!characters <number>` - Set character slots (1-10)\n"
+            "`!polltitle <title>` - Set channel post title\n"
+            "`!dmtitle <title>` - Set DM message title"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎮 Character Management",
+        value=(
+            "`!addmain <Main>` - Add main character type\n"
+            "`!deletemain <Main>` - Remove main character\n"
+            "`!addsub <Main> <Class>` - Add subclass\n"
+            "`!deletesub <Main> <Class>` - Remove subclass\n"
+            "`!addcharacter` - Add character slot\n"
+            "`!deletecharacter <slot>` - Remove slot"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📊 Data Collection",
+        value=(
+            "`!survey` - Send survey to all role members\n"
+            "`!survey @user1 @user2` - Send to specific users\n"
+            "`!poll` - Create attendance event (modal)\n"
+            "`!poll <#channel> <@role>` - Targeted poll\n"
+            "`!poll <id> @user` - Resend attendance DM\n"
+            "`!deletepoll <id>` - Delete event\n"
+            "`!event` - Reaction-based event\n"
+            "`!deleteevent <id>` - Delete reaction event"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💰 Rewards",
+        value=(
+            "`!reward` - Post reward distribution\n"
+            "`!rewardconfig` - View reward formula\n"
+            "`!setreward <setting> <value>` - Update formula"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📁 Data Export",
+        value=(
+            "`!exportsurvey` - Export survey CSV\n"
+            "`!exportpoll` - Export attendance CSV\n"
+            "`!exportdatabase` - Export database JSON"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🏆 Leaderboard",
+        value=(
+            "`!leaderboard #channel` - Live leaderboard\n"
+            "`!tracksurvey <time1> <time2>` - Survey age tracking"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔧 Maintenance",
+        value=(
+            "`!deleteuser <nickname>` - Delete user\n"
+            "`!deletecache` - Clear cache\n"
+            "`!restart` - Reset events & refresh nicknames\n"
+            "`!msg <text>` - DM all role members\n"
+            "`!msg @users <text>` - DM specific users\n"
+            "`!msg #channel <text>` - Send to channel\n"
+            "`!editdatabase @user character <slot> main|subclass <value>`"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="💡 Tip: Use !config for quick setup | All commands require Administrator permission")
+    
+    await ctx.send(embed=embed)
 
 @bot.command(name='config')
 @commands.has_permissions(administrator=True)
@@ -1600,42 +1696,67 @@ async def remove_attendance(ctx, event_id: int):
 @bot.command(name='restart')
 @commands.has_permissions(administrator=True)
 async def restart_system(ctx):
-    """Restart system: deletes ALL messages from announcement channel, clears all events, and refreshes user nicknames"""
+    """Restart system: deletes ALL bot messages from ALL channels, clears all events, and refreshes user nicknames"""
     await ctx.send('🔄 Starting system restart...')
     
-    # Step 1: Delete ALL messages from the announcement channel
-    channel_id = await get_cached_setting('announcement_channel')
-    deleted_count = 0
+    # Step 1: Delete ALL bot messages from ALL channels
+    await ctx.send('🧹 Deleting ALL bot messages from ALL channels...')
+    total_deleted = 0
+    channels_processed = 0
     
-    if channel_id:
-        channel = ctx.guild.get_channel(int(channel_id))
-        if channel:
+    # Get bot user ID
+    bot_id = bot.user.id
+    
+    # Iterate through all text channels in the guild
+    for channel in ctx.guild.text_channels:
+        try:
+            channel_deleted = 0
+            
+            # Keep purging in batches until no more messages can be bulk deleted
+            # Discord's purge can only delete messages < 14 days old
+            while True:
+                try:
+                    deleted = await channel.purge(limit=100, check=lambda m: m.author.id == bot_id)
+                    batch_count = len(deleted)
+                    channel_deleted += batch_count
+                    
+                    # If we deleted fewer than 100, we've cleared all recent messages
+                    if batch_count < 100:
+                        break
+                    
+                    # Small delay to avoid rate limits
+                    await asyncio.sleep(0.5)
+                    
+                except discord.HTTPException as e:
+                    print(f'Purge error in #{channel.name}: {e}')
+                    break
+            
+            # Now delete older messages individually (>14 days old)
+            old_messages_deleted = 0
             try:
-                await ctx.send(f'🧹 Deleting ALL messages from announcement channel...')
-                
-                # Bulk delete messages (Discord allows up to 100 messages at a time, max 14 days old)
-                # First try bulk delete for recent messages
-                deleted = await channel.purge(limit=100, check=lambda m: True)
-                deleted_count = len(deleted)
-                
-                # If there are more messages (older than 14 days), delete them individually
-                if deleted_count == 100:
-                    await ctx.send('⏳ Deleting older messages (this may take a moment)...')
-                    async for message in channel.history(limit=None):
+                async for message in channel.history(limit=500):
+                    if message.author.id == bot_id:
                         try:
                             await message.delete()
-                            deleted_count += 1
+                            old_messages_deleted += 1
+                            channel_deleted += 1
+                            await asyncio.sleep(0.2)
                         except discord.HTTPException:
                             pass
-                
-                await ctx.send(f'✅ Deleted {deleted_count} message(s) from announcement channel.')
-            except discord.Forbidden:
-                await ctx.send('❌ Missing permissions to delete messages from announcement channel.')
             except Exception as e:
-                await ctx.send(f'⚠️ Error deleting messages: {str(e)}')
-                print(f"Error purging channel: {e}")
-    else:
-        await ctx.send('⚠️ No announcement channel set. Use !setchannel first.')
+                print(f'Error deleting old messages from #{channel.name}: {e}')
+            
+            if channel_deleted > 0:
+                total_deleted += channel_deleted
+                channels_processed += 1
+                print(f'Deleted {channel_deleted} bot message(s) from #{channel.name} ({old_messages_deleted} old messages)')
+        
+        except discord.Forbidden:
+            print(f'Missing permissions to delete messages in #{channel.name}')
+        except Exception as e:
+            print(f'Error deleting messages from #{channel.name}: {e}')
+    
+    await ctx.send(f'✅ Deleted {total_deleted} bot message(s) from {channels_processed} channel(s).')
     
     # Stop all countdown timers
     for task_id, task in list(countdown_tasks.items()):
@@ -1800,6 +1921,103 @@ async def clear_event_id(ctx):
     
     await ctx.send(summary)
 
+@bot.command(name='rewardconfig')
+@commands.has_permissions(administrator=True)
+async def show_reward_config(ctx):
+    """Show current reward formula configuration
+    
+    Usage: !rewardconfig
+    """
+    # Default values
+    defaults = {
+        'max_reward': 7000,
+        'base_role_reward': 2000,
+        'survey_bonus': 1000,
+        'survey_penalty_no_submit': 2000,
+        'event_portion': 3000,
+        'pvp_portion': 1000,
+        'survey_penalty_1': 500,
+        'survey_penalty_2': 1000
+    }
+    
+    # Get current values from database or use defaults
+    config = {}
+    for key, default_value in defaults.items():
+        value = await db.get_setting(f'reward_{key}')
+        config[key] = int(value) if value else default_value
+    
+    # Format output
+    output = f"""**💰 Reward Formula Configuration**
+
+**Current Settings:**
+• Max Reward: **{config['max_reward']:,}** reds
+• Base Role Reward: **{config['base_role_reward']:,}** reds
+• Survey Bonus: **{config['survey_bonus']:,}** reds
+• Survey Penalty (no submit): **{config['survey_penalty_no_submit']:,}** reds
+• Event Portion (total): **{config['event_portion']:,}** reds
+• PvP Portion: **{config['pvp_portion']:,}** reds
+• Survey Penalty 1 (>time1): **{config['survey_penalty_1']:,}** reds
+• Survey Penalty 2 (>time2): **{config['survey_penalty_2']:,}** reds
+
+**To change a value, use:**
+`!setreward <setting> <value>`
+
+**Available settings:**
+`max_reward`, `base_role_reward`, `survey_bonus`, `survey_penalty_no_submit`, `event_portion`, `pvp_portion`, `survey_penalty_1`, `survey_penalty_2`
+
+**Examples:**
+`!setreward base_role_reward 3000`
+`!setreward event_portion 4000`
+`!setreward max_reward 10000`"""
+    
+    await ctx.send(output)
+
+@bot.command(name='setreward')
+@commands.has_permissions(administrator=True)
+async def set_reward_config(ctx, setting: str = None, value: int = None):
+    """Set a reward formula value
+    
+    Usage: !setreward <setting> <value>
+    Example: !setreward base_role_reward 3000
+    """
+    valid_settings = [
+        'max_reward', 'base_role_reward', 'survey_bonus', 
+        'survey_penalty_no_submit', 'event_portion', 'pvp_portion',
+        'survey_penalty_1', 'survey_penalty_2'
+    ]
+    
+    if not setting or not value:
+        await ctx.send('❌ Usage: `!setreward <setting> <value>`\n\nExample: `!setreward base_role_reward 3000`\n\nUse `!rewardconfig` to see all available settings.')
+        return
+    
+    setting = setting.lower()
+    
+    if setting not in valid_settings:
+        await ctx.send(f'❌ Invalid setting: `{setting}`\n\nValid settings: {", ".join(f"`{s}`" for s in valid_settings)}\n\nUse `!rewardconfig` to see current values.')
+        return
+    
+    if value < 0:
+        await ctx.send('❌ Value must be 0 or greater.')
+        return
+    
+    # Save to database
+    await db.set_setting(f'reward_{setting}', str(value))
+    clear_settings_cache()
+    
+    # Get friendly name
+    friendly_names = {
+        'max_reward': 'Max Reward',
+        'base_role_reward': 'Base Role Reward',
+        'survey_bonus': 'Survey Bonus',
+        'survey_penalty_no_submit': 'Survey Penalty (no submit)',
+        'event_portion': 'Event Portion (total)',
+        'pvp_portion': 'PvP Portion',
+        'survey_penalty_1': 'Survey Penalty 1 (>time1)',
+        'survey_penalty_2': 'Survey Penalty 2 (>time2)'
+    }
+    
+    await ctx.send(f'✅ **{friendly_names[setting]}** set to **{value:,}** reds\n\nUse `!rewardconfig` to see all current values.')
+
 @bot.command(name='reward')
 @commands.has_permissions(administrator=True)
 async def export_reward_data(ctx):
@@ -1813,13 +2031,15 @@ async def export_reward_data(ctx):
     
     import io
     
-    # Get configuration settings
-    MAX_REWARD = 7000  # Total maximum reds
-    SURVEY_PORTION = 3000  # Survey contribution
-    EVENT_PORTION = 3000  # Event attendance contribution
-    PVP_PORTION = 1000  # PvP role bonus
-    SURVEY_PENALTY_1 = 500  # Penalty for exceeding time1
-    SURVEY_PENALTY_2 = 1000  # Penalty for exceeding time2
+    # Get configuration settings from database (with defaults)
+    MAX_REWARD = int(await db.get_setting('reward_max_reward') or 7000)
+    BASE_ROLE_REWARD = int(await db.get_setting('reward_base_role_reward') or 2000)
+    SURVEY_BONUS = int(await db.get_setting('reward_survey_bonus') or 1000)
+    SURVEY_PENALTY_NO_SUBMIT = int(await db.get_setting('reward_survey_penalty_no_submit') or 2000)
+    EVENT_PORTION = int(await db.get_setting('reward_event_portion') or 3000)
+    PVP_PORTION = int(await db.get_setting('reward_pvp_portion') or 1000)
+    SURVEY_PENALTY_1 = int(await db.get_setting('reward_survey_penalty_1') or 500)
+    SURVEY_PENALTY_2 = int(await db.get_setting('reward_survey_penalty_2') or 1000)
     
     # Get tracksurvey thresholds
     warning_seconds = await db.get_setting('track_warning_seconds')
@@ -1832,6 +2052,19 @@ async def export_reward_data(ctx):
     time1 = int(warning_seconds)
     time2 = int(poop_seconds)
     
+    # Get member role (from !config)
+    member_role_id = await db.get_setting('survey_role')
+    if not member_role_id:
+        await ctx.send('❌ Guild role not set. Use `!config` to configure the guild role first.')
+        return
+    
+    member_role = ctx.guild.get_role(int(member_role_id))
+    if not member_role:
+        await ctx.send(f'❌ Guild role ID {member_role_id} not found in server.')
+        return
+    
+    await ctx.send(f'✅ Guild Role: **{member_role.name}**')
+    
     # Get PvP role
     pvp_role_id = await db.get_setting('pvp_role')
     pvp_role = None
@@ -1842,11 +2075,9 @@ async def export_reward_data(ctx):
         else:
             await ctx.send(f'⚠️ PvP Role ID {pvp_role_id} not found in server. Run `!config` to set it.')
     
-    # Get all users
+    # Get all users from database
     users = await db.get_all_users()
-    if not users:
-        await ctx.send('❌ No user data found.')
-        return
+    users_dict = {user['discord_id']: user for user in users}
     
     # Get all events (both !poll and !event)
     poll_events = await db.get_all_attendance_events()
@@ -1865,7 +2096,7 @@ async def export_reward_data(ctx):
     total_events = len(poll_events) + len(event_reactions)
     
     if total_events == 0:
-        await ctx.send('ℹ️ No events found. Rewards will be calculated from survey completion and PvP role only.')
+        await ctx.send('ℹ️ No events found. Rewards will be calculated from base role, survey, and PvP role only.')
     
     # Calculate event share per event
     event_share = EVENT_PORTION / total_events if total_events > 0 else 0
@@ -1873,23 +2104,39 @@ async def export_reward_data(ctx):
     # Current time for survey age calculation
     current_time = datetime.utcnow()
     
-    # Calculate rewards for each user
+    # Get all members with the !setrole role
+    members_with_role = [member for member in ctx.guild.members if member_role in member.roles]
+    
+    if not members_with_role:
+        await ctx.send('❌ No members found with the configured role.')
+        return
+    
+    # Calculate rewards for each member with the role
     user_rewards = []
     pvp_bonus_count = 0  # Track how many users get PvP bonus
     
-    for user in users:
-        nickname = user['nickname']
-        discord_id = user['discord_id']
-        combat_power = user['combat_power']
+    for member in members_with_role:
+        discord_id = str(member.id)
+        nickname = member.display_name
+        
+        # Get user data from database (if exists)
+        user = users_dict.get(discord_id, {})
+        combat_power = user.get('combat_power', 0)
         attendances = user.get('attendances', {})
         survey_timestamp_str = user.get('survey_timestamp', None)
+        
+        # Step 1: Base Role Reward (always get 2,000 for having the role)
+        base_reward = BASE_ROLE_REWARD
         
         # Step 2: Survey Bonus/Penalty
         survey_reward = 0
         penalty_applied = ""
+        has_survey = False
+        
         if survey_timestamp_str and survey_timestamp_str != 'N/A':
-            # User completed survey
-            survey_reward = SURVEY_PORTION
+            # User completed survey - give bonus
+            has_survey = True
+            survey_reward = SURVEY_BONUS
             
             # Calculate survey age
             try:
@@ -1911,21 +2158,20 @@ async def export_reward_data(ctx):
                 
                 # Apply penalties based on survey age
                 if survey_age_seconds > time2:
-                    survey_reward -= SURVEY_PENALTY_2
-                    penalty_applied = f" (-{SURVEY_PENALTY_2} penalty, {int(survey_age_seconds/86400)}d old)"
+                    # Survey too old - treat as no survey (remove all survey value)
+                    survey_reward = -SURVEY_PENALTY_NO_SUBMIT
+                    penalty_applied = f" (survey expired, {int(survey_age_seconds/86400)}d old)"
                 elif survey_age_seconds > time1:
                     survey_reward -= SURVEY_PENALTY_1
                     penalty_applied = f" (-{SURVEY_PENALTY_1} penalty, {int(survey_age_seconds/86400)}d old)"
-                
-                # Ensure non-negative
-                survey_reward = max(0, survey_reward)
             except Exception as e:
-                # If parsing fails, give full survey reward but log the error
+                # If parsing fails, give full survey bonus but log the error
                 print(f"Warning: Failed to parse survey timestamp for {nickname}: {survey_timestamp_str}, error: {e}")
-                survey_reward = SURVEY_PORTION
+                survey_reward = SURVEY_BONUS
         else:
-            # No survey completed
-            survey_reward = 0
+            # No survey completed - apply penalty
+            survey_reward = -SURVEY_PENALTY_NO_SUBMIT
+            penalty_applied = " (no survey penalty)"
         
         # Step 3: Event/Attendance Reward
         event_reward = 0
@@ -1939,29 +2185,32 @@ async def export_reward_data(ctx):
             
             response = attendances.get(event_id_str, 'NO RESPONSE')
             
-            if response == 'YES' or response == 'NO':
-                # Full event share for answering (YES or NO)
+            if response == 'YES':
+                # Full event share for YES
                 event_reward += event_share
-                if response == 'YES':
-                    attendance_count += 1
+                attendance_count += 1
+            elif response == 'NO':
+                # 50% event share for NO
+                event_reward += event_share * 0.5
             # 'NO RESPONSE' gets 0 reward (didn't answer yet)
         
         # Step 4: PvP Role Bonus
         pvp_reward = 0
-        if pvp_role:
-            member = ctx.guild.get_member(int(discord_id))
-            if member and pvp_role in member.roles:
-                pvp_reward = PVP_PORTION
-                pvp_bonus_count += 1
+        if pvp_role and pvp_role in member.roles:
+            pvp_reward = PVP_PORTION
+            pvp_bonus_count += 1
         
-        # Step 5: Total Reward (capped at MAX_REWARD)
-        total_reward = min(survey_reward + event_reward + pvp_reward, MAX_REWARD)
+        # Step 5: Total Reward (capped at MAX_REWARD, but can be 0 or negative)
+        total_reward = base_reward + survey_reward + event_reward + pvp_reward
+        total_reward = min(total_reward, MAX_REWARD)
+        total_reward = max(0, total_reward)  # Floor at 0
         total_reward = int(total_reward)  # Round to integer
         
         user_rewards.append({
             'nickname': nickname,
             'combat_power': combat_power,
             'attendances': attendance_count,
+            'base_reward': int(base_reward),
             'survey_reward': int(survey_reward),
             'event_reward': int(event_reward),
             'pvp_reward': int(pvp_reward),
@@ -1973,12 +2222,12 @@ async def export_reward_data(ctx):
     user_rewards.sort(key=lambda x: -x['reward_tally'])
     
     # Send summary info
-    await ctx.send(f'📊 **PvP Bonus:** {pvp_bonus_count}/{len(users)} users received +{PVP_PORTION} reds')
+    await ctx.send(f'📊 **Members with role:** {len(members_with_role)} | **PvP Bonus:** {pvp_bonus_count} users')
     
     # Format message for channel display
     message = "**REWARD DISTRIBUTION**\n\n"
     message += "```\n"
-    message += f"{'Nickname':<20} | {'Reward Tally':>12}\n"
+    message += f"{'Member':<20} | {'Reward':>12}\n"
     message += "-" * 36 + "\n"
     
     for user_reward in user_rewards:
@@ -2010,7 +2259,6 @@ async def export_reward_data(ctx):
             current_msg += line + "\n"
     else:
         await ctx.send(message)
-
 # Event command - Reaction-based attendance
 @bot.command(name='event')
 @commands.has_permissions(administrator=True)
